@@ -1,0 +1,46 @@
+services:
+  - type: web
+    name: 104dairies-news
+    runtime: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: python run.py --env prod --port $PORT
+    healthCheckPath: /health
+    autoDeploy: true
+    disk:
+      name: 104dairies-media
+      mountPath: /var/data
+      sizeGB: 10
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: DATABASE_URL
+        sync: false
+      - key: REQUIRE_POSTGRES
+        value: "true"
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: INSTAGRAM_ACCOUNT_ID
+        sync: false
+      - key: INSTAGRAM_ACCESS_TOKEN
+        sync: false
+      - key: GOOGLE_OAUTH_TOKEN_JSON
+        sync: false
+      - key: CONTROL_TOKEN
+        sync: false
+      - key: PUBLIC_BASE_URL
+        sync: false
+      - key: OUTPUT_DIR
+        value: /var/data
+      - key: GOOGLE_OAUTH_TOKEN_FILE
+        value: /var/data/youtube-token.json
+      - key: META_GRAPH_API_VERSION
+        value: v27.0
+      - key: POSTING_TIME
+        value: "18:00"
+      - key: TIMEZONE
+        value: Asia/Kolkata
+      - key: FFMPEG_BIN
+        value: ffmpeg

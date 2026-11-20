@@ -218,3 +218,12 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Project secrets and generated data
+.env.*
+!.env.example
+data/*
+!data/.gitkeep
+client_secret.json
+*.sqlite
+*.db
