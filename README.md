@@ -86,11 +86,13 @@ python -m pip install -r requirements.txt
 python -B -m unittest discover -s tests -v
 ```
 
-Tests use SQLite in memory. Production uses Neon PostgreSQL from `DATABASE_URL`.
-To start the service locally in development mode, run `python run.py --env dev`;
-the runner enables reload and binds to `127.0.0.1:8000`. Render uses
-`python run.py --env prod --port $PORT`, which disables reload and binds to
-`0.0.0.0` as required for an externally reachable Render web service.
+Tests use SQLite in memory. In development, `ENV=dev` uses the local `DB_USER`,
+`DB_PASSWORD`, `DB_HOST`, `DB_PORT`, and `DEV_DB_NAME` settings; a PostgreSQL
+`DATABASE_URL` is ignored. In production, `ENV=prod` requires a PostgreSQL
+`DATABASE_URL` (Neon in Render) and never falls back to SQLite. To start locally,
+run `python run.py --env dev`; the runner enables reload and binds to
+`127.0.0.1:8000`. Render uses `python run.py --env prod --port $PORT`, which
+disables reload and binds to `0.0.0.0` for an externally reachable service.
 
 The app's startup handler configures the scheduler and includes the health,
 job, and media routers from `app.api`. Startup table creation is intentionally

@@ -94,7 +94,7 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(url.port, 5432)
         self.assertEqual(url.database, "ai_content")
 
-    def test_explicit_neon_database_url_takes_precedence(self) -> None:
+    def test_dev_uses_local_database_settings_when_neon_url_is_set(self) -> None:
         with patch.dict(
             "os.environ",
             {
@@ -110,10 +110,46 @@ class CoreTests(unittest.TestCase):
         ):
             settings = Settings.from_env()
 
+        url = make_url(settings.database_url)
+        self.assertEqual(url.username, "local-user")
+        self.assertEqual(url.password, "local-password")
+        self.assertEqual(url.host, "localhost")
+        self.assertEqual(url.database, "ai_content")
+
+    def test_prod_uses_neon_database_url(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "ENV": "prod",
+                "DATABASE_URL": "postgresql://neon-user:neon-password@neon.example/db",
+                "DB_USER": "local-user",
+                "DB_PASSWORD": "local-password",
+                "DB_HOST": "localhost",
+                "DB_PORT": "5432",
+                "DEV_DB_NAME": "ai_content",
+            },
+            clear=True,
+        ):
+            settings = Settings.from_env()
+
         self.assertEqual(
             settings.database_url,
             "postgresql://neon-user:neon-password@neon.example/db",
         )
+        self.assertTrue(settings.require_postgres)
+
+    def test_prod_requires_postgres_database_url(self) -> None:
+        with patch.dict("os.environ", {"ENV": "prod"}, clear=True):
+            with self.assertRaisesRegex(ValueError, "DATABASE_URL is required"):
+                Settings.from_env()
+
+        with patch.dict(
+            "os.environ",
+            {"ENV": "prod", "DATABASE_URL": "sqlite:///local.db"},
+            clear=True,
+        ):
+            with self.assertRaisesRegex(ValueError, "must be a PostgreSQL URL"):
+                Settings.from_env()
 
     def test_plain_text_removes_markup_and_decodes_entities(self) -> None:
         self.assertEqual(

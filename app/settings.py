@@ -78,8 +78,14 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> "Settings":
-        database_url = os.getenv("DATABASE_URL", "").strip()
-        if not database_url and os.getenv("ENV", "").lower() == "dev":
+        environment = os.getenv("ENV", "dev").strip().lower()
+        configured_database_url = os.getenv("DATABASE_URL", "").strip()
+
+        if environment == "dev":
+            if configured_database_url.startswith(("sqlite://", "sqlite:///")):
+                database_url = configured_database_url
+            else:
+                database_url = ""
             db_values = {
                 "DB_USER": os.getenv("DB_USER", ""),
                 "DB_PASSWORD": os.getenv("DB_PASSWORD", ""),
@@ -87,7 +93,7 @@ class Settings:
                 "DB_PORT": os.getenv("DB_PORT", ""),
                 "DEV_DB_NAME": os.getenv("DEV_DB_NAME", ""),
             }
-            if any(db_values.values()):
+            if not database_url and any(db_values.values()):
                 missing_db_values = [
                     name for name, value in db_values.items() if not value
                 ]
@@ -104,8 +110,22 @@ class Settings:
                     port=int(db_values["DB_PORT"]),
                     database=db_values["DEV_DB_NAME"],
                 ).render_as_string(hide_password=False)
-        if not database_url:
-            database_url = "sqlite:///data/104dairies.db"
+            if not database_url:
+                database_url = "sqlite:///data/104dairies.db"
+        elif environment == "prod":
+            database_url = configured_database_url
+            if not database_url:
+                raise ValueError(
+                    "DATABASE_URL is required when ENV=prod; set it to the Neon PostgreSQL URL."
+                )
+            if not database_url.startswith(
+                ("postgres://", "postgresql://", "postgresql+psycopg://")
+            ):
+                raise ValueError(
+                    "DATABASE_URL must be a PostgreSQL URL when ENV=prod."
+                )
+        else:
+            raise ValueError("ENV must be either 'dev' or 'prod'.")
 
         feeds_json = os.getenv("NEWS_FEEDS_JSON", "").strip()
         feeds = json.loads(feeds_json) if feeds_json else DEFAULT_FEEDS
@@ -132,7 +152,10 @@ class Settings:
             public_base_url=os.getenv("PUBLIC_BASE_URL", "").rstrip("/"),
             control_token=os.getenv("CONTROL_TOKEN", ""),
             database_url=database_url,
-            require_postgres=os.getenv("REQUIRE_POSTGRES", "false").lower() == "true",
+            require_postgres=(
+                environment == "prod"
+                or os.getenv("REQUIRE_POSTGRES", "false").lower() == "true"
+            ),
             google_oauth_client_secrets=Path(
                 os.getenv(
                     "GOOGLE_OAUTH_CLIENT_SECRETS", "data/client_secret.json"
