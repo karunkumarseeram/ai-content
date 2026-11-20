@@ -31,6 +31,15 @@ from sqlalchemy.engine import make_url
 
 
 class CoreTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls._environment_patch = patch.dict(os.environ, {"ENV": "dev"})
+        cls._environment_patch.start()
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls._environment_patch.stop()
+
     def test_run_entrypoint_selects_development_and_production_modes(self) -> None:
         with patch.dict("os.environ", {}, clear=True):
             with patch("run.uvicorn.run") as uvicorn_run:
