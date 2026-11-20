@@ -57,12 +57,20 @@ it to multiple instances, which would run duplicate schedulers.
      `GOOGLE_OAUTH_TOKEN_JSON` secret. Do not paste credentials into chat or
      commit them. The service persists refreshed tokens on its private Render
      disk.
-6. Confirm the Instagram account is Professional and connected to a Facebook
-   Page. The Meta app must have the Instagram content-publishing permissions
-   and access required for that account.
+6. Confirm the Instagram account is Professional (Business or Creator). In the
+   Meta app, configure Instagram API with Unified Login, add the account as an
+   Instagram Tester, and grant `instagram_basic` and
+   `instagram_content_publish`. Generate the account token from the app's
+   **Generate access tokens** section.
 7. Check `https://<service>.onrender.com/health`. It should report both
    `status: ok` and `database: connected`. Render runs the daily preparation at
    17:00 and publishing at 18:00 India time.
+
+`INSTAGRAM_ACCESS_TOKEN` must be the token generated for the Instagram account
+through Unified Login. The publisher calls `graph.facebook.com`; an Instagram
+Login token for `graph.instagram.com` is not interchangeable. The Meta
+configuration may show a token as non-expiring, but it can still be revoked;
+store it as a secret and never commit or share it.
 
 `render.yaml` marks secrets `sync: false`, so they must be set in Render's
 dashboard and are not copied from your local `.env`. The running application
@@ -83,6 +91,13 @@ To start the service locally in development mode, run `python run.py --env dev`;
 the runner enables reload and binds to `127.0.0.1:8000`. Render uses
 `python run.py --env prod --port $PORT`, which disables reload and binds to
 `0.0.0.0` as required for an externally reachable Render web service.
+
+The app's startup handler configures the scheduler and includes the health,
+job, and media routers from `app.api`. Startup table creation is intentionally
+disabled; the publishing pipeline calls `app.db.init_db.init_db()` before a
+job runs. Database engine configuration lives in `app.db.database`, and
+SQLAlchemy models live in `app.db.models`. Run `python run.py --env dev` from
+the project root to load `.env` and start Uvicorn.
 
 ## Operations
 

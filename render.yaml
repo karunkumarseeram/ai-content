@@ -37,7 +37,7 @@ services:
       - key: GOOGLE_OAUTH_TOKEN_FILE
         value: /var/data/youtube-token.json
       - key: META_GRAPH_API_VERSION
-        value: v24.0
+        value: v27.0
       - key: POSTING_TIME
         value: "18:00"
       - key: TIMEZONE

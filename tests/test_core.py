@@ -12,14 +12,15 @@ from sqlalchemy.orm import Session
 from app.main import app
 from app.news import _plain_text
 from app.pipeline import prepare_daily_job, publish_prepared_job, run_daily_job
+from app.publishers import publish_instagram
+from app.db.database import get_engine
+from app.db.init_db import init_db
+from app.db.models import JobRecord
 from app.repository import (
-    JobRecord,
     create_job,
     delete_expired_jobs,
-    get_engine,
     get_job,
     get_latest_job,
-    initialize_database,
     save_job,
 )
 from app.schemas import Article, NewsDraft, StoryBeat
@@ -120,6 +121,66 @@ class CoreTests(unittest.TestCase):
             "News & updates today",
         )
 
+    def test_unified_login_publisher_uses_facebook_graph_api(self) -> None:
+        settings = replace(
+            Settings.from_env(),
+            instagram_account_id="test-ig-account",
+            instagram_access_token="test-instagram-user-token",
+            public_base_url="https://news.example.test",
+            meta_graph_api_version="v27.0",
+        )
+        draft = NewsDraft(
+            opening="Here is today's update.",
+            closing="That is the latest.",
+            beats=[
+                StoryBeat(
+                    headline=f"Headline number {index}",
+                    narration="This is a neutral, sourced news update for today.",
+                    source_ids=["source-1"],
+                    visual_prompt="Abstract illustration with neutral colors and motion.",
+                )
+                for index in range(1, 5)
+            ],
+        )
+        created = MagicMock()
+        created.is_success = True
+        created.json.return_value = {"id": "test-container"}
+        status = MagicMock()
+        status.is_success = True
+        status.json.return_value = {"status_code": "FINISHED"}
+        published = MagicMock()
+        published.is_success = True
+        published.json.return_value = {"id": "test-media"}
+        client = MagicMock()
+        client.post.side_effect = [created, published]
+        client.get.return_value = status
+
+        with patch("app.publishers.httpx.Client") as http_client:
+            http_client.return_value.__enter__.return_value = client
+            result = publish_instagram(
+                settings,
+                "https://news.example.test/media/video.mp4",
+                draft,
+                {"source-1": {"source": "Example News", "url": "https://news.example.test/story"}},
+            )
+
+        self.assertEqual(result, "https://www.instagram.com/reel/test-media/")
+        self.assertIn(
+            "https://graph.facebook.com/v27.0/test-ig-account/media",
+            client.post.call_args_list[0].args[0],
+        )
+        self.assertIn(
+            "https://graph.facebook.com/v27.0/test-container",
+            client.get.call_args.args[0],
+        )
+        self.assertIn(
+            "https://graph.facebook.com/v27.0/test-ig-account/media_publish",
+            client.post.call_args_list[1].args[0],
+        )
+        self.assertEqual(
+            client.post.call_args_list[0].kwargs["params"]["media_type"], "REELS"
+        )
+
     def test_news_script_is_composed_from_all_beats(self) -> None:
         draft = NewsDraft(
             opening="Here is today's update.",
@@ -170,6 +231,7 @@ class CoreTests(unittest.TestCase):
                     "OUTPUT_DIR": temporary_directory,
                 },
             ):
+                init_db(Settings.from_env())
                 with TestClient(app) as client:
                     self.assertEqual(client.get("/health").status_code, 200)
                     self.assertEqual(client.get("/jobs/latest").status_code, 401)
@@ -187,7 +249,7 @@ class CoreTests(unittest.TestCase):
                 database_url="sqlite:///:memory:",
                 output_dir=output_dir,
             )
-            initialize_database(settings.database_url)
+            init_db(settings)
             expired_id = "b" * 32
             expired_job = {
                 "id": expired_id,
@@ -307,7 +369,7 @@ class CoreTests(unittest.TestCase):
 
     def test_expired_job_cleanup_removes_only_local_database_record(self) -> None:
         database_url = "sqlite:///:memory:"
-        initialize_database(database_url)
+        init_db(replace(Settings.from_env(), database_url=database_url))
         job_id = "a" * 32
         job = {
             "id": job_id,

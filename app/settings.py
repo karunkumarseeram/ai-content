@@ -128,7 +128,7 @@ class Settings:
             ),
             instagram_account_id=os.getenv("INSTAGRAM_ACCOUNT_ID", ""),
             instagram_access_token=os.getenv("INSTAGRAM_ACCESS_TOKEN", ""),
-            meta_graph_api_version=os.getenv("META_GRAPH_API_VERSION", "v24.0"),
+            meta_graph_api_version=os.getenv("META_GRAPH_API_VERSION", "v27.0"),
             public_base_url=os.getenv("PUBLIC_BASE_URL", "").rstrip("/"),
             control_token=os.getenv("CONTROL_TOKEN", ""),
             database_url=database_url,

@@ -9,12 +9,12 @@ from zoneinfo import ZoneInfo
 
 from app.editor import NewsEditor
 from app.news import fetch_articles
+from app.db.init_db import init_db
 from app.publishers import publish_instagram, publish_youtube
 from app.repository import (
     create_job,
     delete_expired_jobs,
     get_latest_prepared_job,
-    initialize_database,
     save_job,
 )
 from app.schemas import NewsDraft
@@ -72,7 +72,7 @@ def prepare_daily_job(settings: Settings | None = None) -> dict:
     }
     job_created = False
     try:
-        initialize_database(settings.database_url)
+        init_db(settings)
         video_dir = settings.output_dir / "videos"
         video_dir.mkdir(parents=True, exist_ok=True)
         local_today = datetime.now(ZoneInfo(settings.timezone)).date()
@@ -147,7 +147,7 @@ def publish_prepared_job(settings: Settings | None = None) -> dict:
         return {"status": "skipped", "reason": "A news job is already running."}
 
     try:
-        initialize_database(settings.database_url)
+        init_db(settings)
         record = get_latest_prepared_job(settings.database_url, timedelta(hours=2))
         if record is None:
             return {"status": "failed", "error": "No prepared news video is waiting."}
