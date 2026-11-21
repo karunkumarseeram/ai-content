@@ -1,7 +1,10 @@
 import json
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 from openai import OpenAI
 
+from app.news_rubric import NEWS_CURATION_RUBRIC
 from app.schemas import Article, NewsDraft
 
 
@@ -12,7 +15,9 @@ class NewsEditor:
         self.client = OpenAI(api_key=api_key)
         self.model = model
 
-    def create_draft(self, articles: list[Article]) -> NewsDraft:
+    def create_draft(
+        self, articles: list[Article], brief_date: date | None = None
+    ) -> NewsDraft:
         source_data = [
             {
                 "id": article.article_id,
@@ -21,30 +26,22 @@ class NewsEditor:
                 "title": article.title,
                 "summary": article.summary,
                 "url": article.url,
+                "published_at": (
+                    article.published_at.isoformat()
+                    if article.published_at is not None
+                    else None
+                ),
             }
             for article in articles
         ]
+        briefing_date = brief_date or datetime.now(ZoneInfo("Asia/Kolkata")).date()
         response = self.client.responses.create(
             model=self.model,
-            instructions=(
-                "You are the fact-first editor for 104Dairies, an Indian daily news "
-                "brief. Use only facts explicitly present in the supplied RSS items. "
-                "Do not add current events, numbers, quotes, names, context, or claims "
-                "from memory. Select 4 to 6 genuinely important and varied stories, "
-                "favoring India, regional India, politics, international news, "
-                "technology/gadgets, business, science, and sports when supported by "
-                "the feed. Do not force a category when there is no supported story. "
-                "Use neutral language, distinguish allegations from established facts, "
-                "and avoid sensationalism. Each beat must cite one or more exact article "
-                "IDs from the input. Write an English script of 115 to 130 spoken "
-                "words total, including opening and closing, suitable for a brisk "
-                "one-minute news video. Every visual prompt must describe an abstract, "
-                "clearly illustrative scene: no realistic depiction of a real person, "
-                "politician, event, or breaking-news footage; no text in the image. "
-                "Return only a JSON object with opening, closing, and beats. Each beat "
-                "has headline, narration, source_ids, and visual_prompt."
+            instructions=NEWS_CURATION_RUBRIC,
+            input=json.dumps(
+                {"brief_date": briefing_date.isoformat(), "articles": source_data},
+                ensure_ascii=False,
             ),
-            input=json.dumps(source_data, ensure_ascii=False),
         )
         try:
             draft = NewsDraft.model_validate_json(response.output_text)

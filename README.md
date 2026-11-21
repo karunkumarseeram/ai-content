@@ -9,7 +9,7 @@ Shorts and Instagram Reels.
 
 ```text
 Render Web Service (one instance, one worker)
-  ├─ APScheduler: prepare at 17:00, publish at 18:00 Asia/Kolkata
+  ├─ Manual trigger: protected POST /jobs/run
   ├─ Neon PostgreSQL: job, script, source, and publishing status records
   └─ Render Persistent Disk (/var/data): temporary generated MP4
        └─ Public HTTPS /media/{job-id}.mp4 for Instagram to fetch
@@ -21,14 +21,22 @@ RSS -> OpenAI script/editor -> Gemini clips -> OpenAI voice -> FFmpeg
 
 No Docker, local PostgreSQL, or always-on local computer is needed. Render runs
 the app continuously; Neon stores job records. The generated MP4 and the
-database record are removed during the next day's preparation run.
-This only removes this app's local file and Neon row; it does not delete or
-modify a published YouTube video or Instagram Reel.
+database record are retained until you manually clean them. Removing a database
+row or local file does not delete or modify a published YouTube video or
+Instagram Reel.
 
 The Render service uses a persistent disk because Instagram needs an HTTPS URL
-to fetch the MP4 at publish time. Use one paid Render web-service instance and
-one worker: the scheduler and media disk are part of that service. Do not scale
-it to multiple instances, which would run duplicate schedulers.
+to fetch the MP4 at publish time. This app does not schedule publishing. On
+Windows development, `/jobs/generate` uses free RSS feeds and a built-in
+coverage rubric to create a locally voiced, locally illustrated video and save
+its story/source record to the dev database. It does not call AI APIs or
+publish. The separate `/jobs/run` pipeline uses paid AI APIs and publishes to
+both platforms; it is not the free generate-only workflow.
+
+The free video renderer uses a consistent 9:16 editorial design: gradient
+backdrops, branded title/source panels, and category-specific vector
+illustrations. These are polished illustrative graphics, not AI-generated or
+photographic depictions of the reported event.
 
 ## Deploy from Git to Render
 
@@ -63,8 +71,7 @@ it to multiple instances, which would run duplicate schedulers.
    `instagram_content_publish`. Generate the account token from the app's
    **Generate access tokens** section.
 7. Check `https://<service>.onrender.com/health`. It should report both
-   `status: ok` and `database: connected`. Render runs the daily preparation at
-   17:00 and publishing at 18:00 India time.
+   `status: ok` and `database: connected`.
 
 `INSTAGRAM_ACCESS_TOKEN` must be the token generated for the Instagram account
 through Unified Login. The publisher calls `graph.facebook.com`; an Instagram
@@ -94,12 +101,12 @@ run `python run.py --env dev`; the runner enables reload and binds to
 `127.0.0.1:8000`. Render uses `python run.py --env prod --port $PORT`, which
 disables reload and binds to `0.0.0.0` for an externally reachable service.
 
-The app's startup handler configures the scheduler and includes the health,
-job, and media routers from `app.api`. Startup table creation is intentionally
-disabled; the publishing pipeline calls `app.db.init_db.init_db()` before a
-job runs. Database engine configuration lives in `app.db.database`, and
-SQLAlchemy models live in `app.db.models`. Run `python run.py --env dev` from
-the project root to load `.env` and start Uvicorn.
+The app's startup handler creates output folders and registers the health, job,
+and media routers from `app.api`; it does not start a scheduler or create
+tables. The publishing pipeline initializes the database before a job runs.
+Database engine configuration lives in `app.db.database`, and SQLAlchemy
+models live in `app.db.models`. Run `python run.py --env dev` from the project
+root to load `.env` and start Uvicorn.
 
 ## Operations
 
@@ -111,7 +118,44 @@ curl.exe https://<service>.onrender.com/jobs/latest `
   -H "Authorization: Bearer YOUR_CONTROL_TOKEN"
 ```
 
-Manual `/jobs/run` creates and publishes immediately. `/jobs/latest` returns
+On Windows dev, start `python run.py --env dev`, then call:
+
+```powershell
+curl.exe -X POST http://127.0.0.1:8000/jobs/generate `
+  -H "Authorization: Bearer YOUR_CONTROL_TOKEN"
+```
+
+This fetches timestamped RSS stories from Google News topic feeds, The Hindu,
+and BBC, keeping only items published within the last 24 hours. The rubric
+prioritizes local/regional India, national/governance, and international news,
+then rotates among business, agriculture, health, education/jobs, technology,
+science/environment, sports/culture, energy/infrastructure, and law/society
+by the India-local date. It selects at most six stories for the one-minute
+brief, creates a local-voice video under `data/videos`, and records its script,
+source URLs, timestamps, and filename in the dev database. It does not call AI
+APIs or publish. The `/jobs/latest` endpoint returns that job.
+The server console logs the generation job ID, fresh RSS count, selected story
+count, and final video path; failed generation logs the exception.
+
+Job logs are not automatically deleted. To manually clear local development
+logs, connect to the `DEV_DB_NAME` database and run:
+
+```sql
+DELETE FROM news_jobs;
+```
+
+This removes database rows only; it does not delete local MP4 files or posts on
+YouTube/Instagram. Make sure you are connected to the intended database before
+running it.
+
+A one-minute video cannot include every story or sector. The rubric aims for
+geographic breadth and rotates sector coverage; it cannot guarantee every
+department or region has fresh RSS items every day. Items without a verifiable
+publication timestamp are excluded rather than presented as breaking news.
+
+Manual `/jobs/run` creates and publishes immediately to both platforms.
+`PUBLIC_BASE_URL` must be a public HTTPS address that Meta can use to fetch the
+generated MP4; `localhost` is not reachable by Instagram. `/jobs/latest` returns
 the newest job from Neon. `/health` is public for Render's health check; job
 endpoints require the bearer token. The public `/media/{job-id}.mp4` endpoint
 serves only generated videos whose job record still exists. Publisher failures

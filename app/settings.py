@@ -11,6 +11,66 @@ load_dotenv()
 
 DEFAULT_FEEDS = [
     {
+        "category": "Local and regional India",
+        "source": "Google News RSS",
+        "url": "https://news.google.com/rss/search?q=India+regional+state+local+news+when%3A1d&hl=en-IN&gl=IN&ceid=IN%3Aen",
+    },
+    {
+        "category": "National and governance",
+        "source": "Google News RSS",
+        "url": "https://news.google.com/rss/search?q=India+national+government+politics+policy+when%3A1d&hl=en-IN&gl=IN&ceid=IN%3Aen",
+    },
+    {
+        "category": "International",
+        "source": "Google News RSS",
+        "url": "https://news.google.com/rss/search?q=world+international+news+when%3A1d&hl=en-IN&gl=IN&ceid=IN%3Aen",
+    },
+    {
+        "category": "Business and economy",
+        "source": "Google News RSS",
+        "url": "https://news.google.com/rss/search?q=India+business+economy+markets+when%3A1d&hl=en-IN&gl=IN&ceid=IN%3Aen",
+    },
+    {
+        "category": "Agriculture",
+        "source": "Google News RSS",
+        "url": "https://news.google.com/rss/search?q=India+agriculture+farming+rural+when%3A1d&hl=en-IN&gl=IN&ceid=IN%3Aen",
+    },
+    {
+        "category": "Health",
+        "source": "Google News RSS",
+        "url": "https://news.google.com/rss/search?q=India+health+medicine+public+health+when%3A1d&hl=en-IN&gl=IN&ceid=IN%3Aen",
+    },
+    {
+        "category": "Education and jobs",
+        "source": "Google News RSS",
+        "url": "https://news.google.com/rss/search?q=India+education+jobs+employment+when%3A1d&hl=en-IN&gl=IN&ceid=IN%3Aen",
+    },
+    {
+        "category": "Technology",
+        "source": "Google News RSS",
+        "url": "https://news.google.com/rss/search?q=India+technology+gadgets+digital+when%3A1d&hl=en-IN&gl=IN&ceid=IN%3Aen",
+    },
+    {
+        "category": "Science and environment",
+        "source": "Google News RSS",
+        "url": "https://news.google.com/rss/search?q=India+science+environment+climate+when%3A1d&hl=en-IN&gl=IN&ceid=IN%3Aen",
+    },
+    {
+        "category": "Sports and culture",
+        "source": "Google News RSS",
+        "url": "https://news.google.com/rss/search?q=India+sports+culture+when%3A1d&hl=en-IN&gl=IN&ceid=IN%3Aen",
+    },
+    {
+        "category": "Energy and infrastructure",
+        "source": "Google News RSS",
+        "url": "https://news.google.com/rss/search?q=India+energy+transport+infrastructure+when%3A1d&hl=en-IN&gl=IN&ceid=IN%3Aen",
+    },
+    {
+        "category": "Law and society",
+        "source": "Google News RSS",
+        "url": "https://news.google.com/rss/search?q=India+law+court+society+when%3A1d&hl=en-IN&gl=IN&ceid=IN%3Aen",
+    },
+    {
         "category": "India",
         "source": "The Hindu",
         "url": "https://www.thehindu.com/news/national/feeder/default.rss",
@@ -72,7 +132,6 @@ class Settings:
     google_oauth_token_json: str
     output_dir: Path
     news_feeds: list[dict[str, str]]
-    posting_time: str
     timezone: str
     ffmpeg_bin: str
 
@@ -167,7 +226,6 @@ class Settings:
             google_oauth_token_json=os.getenv("GOOGLE_OAUTH_TOKEN_JSON", ""),
             output_dir=Path(os.getenv("OUTPUT_DIR", "data")),
             news_feeds=feeds,
-            posting_time=os.getenv("POSTING_TIME", "18:00"),
             timezone=os.getenv("TIMEZONE", "Asia/Kolkata"),
             ffmpeg_bin=os.getenv("FFMPEG_BIN", "ffmpeg"),
         )

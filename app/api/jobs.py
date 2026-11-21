@@ -3,7 +3,7 @@ import asyncio
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.dependencies import require_control_token
-from app.pipeline import run_daily_job
+from app.pipeline import prepare_offline_news_job, run_daily_job
 from app.repository import get_latest_job
 from app.settings import Settings
 
@@ -16,6 +16,11 @@ router = APIRouter(
 @router.post("/run")
 async def run_job() -> dict:
     return await asyncio.to_thread(run_daily_job, Settings.from_env())
+
+
+@router.post("/generate")
+async def generate_job() -> dict:
+    return await asyncio.to_thread(prepare_offline_news_job, Settings.from_env())
 
 
 @router.get("/latest")
