@@ -1,17 +1,29 @@
 from datetime import datetime, timedelta, timezone
 from dataclasses import replace
+import logging
 import os
 import tempfile
+import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
+from PIL import Image
 from sqlalchemy.orm import Session
 
 from app.main import app
-from app.news import _plain_text
-from app.pipeline import prepare_daily_job, publish_prepared_job, run_daily_job
+from app.news import _plain_text, fetch_articles
+from app.news_rubric import select_daily_articles
+from app.offline_video import _make_slide
+from app.pipeline import (
+    _create_offline_draft,
+    prepare_daily_job,
+    prepare_offline_news_job,
+    publish_prepared_job,
+    run_daily_job,
+)
 from app.publishers import publish_instagram
 from app.db.database import get_engine
 from app.db.init_db import init_db
@@ -45,6 +57,7 @@ class CoreTests(unittest.TestCase):
             with patch("run.uvicorn.run") as uvicorn_run:
                 run_application(["--env", "dev", "--port", "8100"])
                 self.assertEqual(os.environ["ENV"], "dev")
+                self.assertEqual(logging.getLogger().getEffectiveLevel(), logging.INFO)
                 self.assertEqual(
                     uvicorn_run.call_args.kwargs,
                     {
@@ -166,6 +179,73 @@ class CoreTests(unittest.TestCase):
             "News & updates today",
         )
 
+    def test_rss_fetch_keeps_fresh_items_and_round_robins_categories(self) -> None:
+        now = datetime.now(timezone.utc)
+
+        class FakeResponse:
+            def __init__(self, content: bytes) -> None:
+                self.content = content
+
+            def raise_for_status(self) -> None:
+                return None
+
+        class FakeClient:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args) -> None:
+                return None
+
+            def get(self, url: str) -> FakeResponse:
+                return FakeResponse(url.encode("utf-8"))
+
+        def parse_feed(content: bytes) -> SimpleNamespace:
+            feed_name = content.decode("utf-8").rsplit("/", 1)[-1]
+            return SimpleNamespace(
+                entries=[
+                    {
+                        "link": f"https://news.example.test/{feed_name}/fresh",
+                        "title": f"Fresh story from {feed_name}",
+                        "summary": "A verified current news story.",
+                        "published_parsed": time.gmtime(
+                            (now - timedelta(minutes=10)).timestamp()
+                        ),
+                        "source": {"title": f"Publisher {feed_name}"},
+                    },
+                    {
+                        "link": f"https://news.example.test/{feed_name}/old",
+                        "title": f"Old story from {feed_name}",
+                        "summary": "A story outside the freshness window.",
+                        "published_parsed": time.gmtime(
+                            (now - timedelta(days=2)).timestamp()
+                        ),
+                    },
+                ]
+            )
+
+        feeds = [
+            {
+                "category": "Regional",
+                "source": "RSS feed one",
+                "url": "https://feed.example.test/one",
+            },
+            {
+                "category": "International",
+                "source": "RSS feed two",
+                "url": "https://feed.example.test/two",
+            },
+        ]
+        with (
+            patch("app.news.httpx.Client", return_value=FakeClient()),
+            patch("app.news.feedparser.parse", side_effect=parse_feed),
+        ):
+            articles = fetch_articles(feeds, limit=2)
+
+        self.assertEqual([article.category for article in articles], ["Regional", "International"])
+        self.assertTrue(all(article.published_at is not None for article in articles))
+        self.assertEqual(articles[0].source, "Publisher one")
+        self.assertNotIn("/old", " ".join(article.url for article in articles))
+
     def test_unified_login_publisher_uses_facebook_graph_api(self) -> None:
         settings = replace(
             Settings.from_env(),
@@ -278,15 +358,231 @@ class CoreTests(unittest.TestCase):
             ):
                 init_db(Settings.from_env())
                 with TestClient(app) as client:
+                    self.assertFalse(hasattr(app.state, "scheduler"))
                     self.assertEqual(client.get("/health").status_code, 200)
                     self.assertEqual(client.get("/jobs/latest").status_code, 401)
+                    self.assertEqual(client.post("/jobs/generate").status_code, 401)
                     response = client.get(
                         "/jobs/latest",
                         headers={"Authorization": "Bearer test-control-token"},
                     )
                     self.assertEqual(response.status_code, 404)
+                    with patch(
+                        "app.api.jobs.prepare_offline_news_job",
+                        return_value={"status": "ready"},
+                    ) as generate_job:
+                        response = client.post(
+                            "/jobs/generate",
+                            headers={"Authorization": "Bearer test-control-token"},
+                        )
+                    self.assertEqual(response.status_code, 200)
+                    self.assertEqual(response.json(), {"status": "ready"})
+                    generate_job.assert_called_once()
 
-    def test_job_records_missing_credentials_before_external_calls(self) -> None:
+    def test_offline_draft_selects_diverse_sources_for_a_one_minute_brief(self) -> None:
+        published_at = datetime.now(timezone.utc) - timedelta(minutes=5)
+        articles = [
+            Article(
+                article_id=f"article-{index}",
+                title=f"News headline number {index}",
+                summary=(
+                    f"Story number {index} reports an important current development "
+                    "with details from the source and additional context for readers."
+                ),
+                url=f"https://news.example.test/{index}",
+                category=category,
+                source="Example News",
+                published_at=published_at,
+            )
+            for index, category in enumerate(
+                ["India", "Politics", "Regional", "World", "Technology and gadgets", "Business", "Science", "Sports"],
+                start=1,
+            )
+        ]
+
+        draft = _create_offline_draft(articles)
+
+        self.assertEqual(len(draft.beats), 6)
+        self.assertGreaterEqual(draft.word_count, 95)
+        self.assertLessEqual(draft.word_count, 140)
+        self.assertEqual(len({beat.source_ids[0] for beat in draft.beats}), 6)
+        self.assertIn("India and around the world", draft.opening)
+
+    def test_daily_rubric_filters_old_stories_and_rotates_sector_slots(self) -> None:
+        now = datetime(2026, 11, 21, 12, 0, tzinfo=timezone.utc)
+        today = now.date()
+        categories = [
+            "Local and regional India",
+            "National and governance",
+            "International",
+            "Business and economy",
+            "Agriculture",
+            "Health",
+            "Education and jobs",
+            "Technology",
+            "Science and environment",
+            "Sports and culture",
+            "Energy and infrastructure",
+            "Law and society",
+        ]
+        articles = [
+            Article(
+                article_id=f"rubric-{index}",
+                title=f"Distinct current story number {index}",
+                summary="A timely report with a verifiable source and useful facts.",
+                url=f"https://news.example.test/rubric/{index}",
+                category=category,
+                source="Example News",
+                published_at=now - timedelta(minutes=index),
+            )
+            for index, category in enumerate(categories, start=1)
+        ]
+        articles.append(
+            Article(
+                article_id="stale-story",
+                title="A stale story that must not be used",
+                summary="This story was published too long ago to qualify.",
+                url="https://news.example.test/stale",
+                category="Technology",
+                source="Example News",
+                published_at=now - timedelta(days=2),
+            )
+        )
+        articles.append(
+            Article(
+                article_id="cutoff-story",
+                title="A story exactly at the freshness cutoff",
+                summary="This story is not within the last 24 hours.",
+                url="https://news.example.test/cutoff",
+                category="Health",
+                source="Example News",
+                published_at=now - timedelta(hours=24),
+            )
+        )
+
+        day_one = select_daily_articles(articles, today=today, now=now)
+        day_two = select_daily_articles(
+            articles, today=today + timedelta(days=1), now=now
+        )
+
+        self.assertEqual(len(day_one), 6)
+        self.assertEqual(len(day_two), 6)
+        self.assertEqual(
+            {article.category for article in day_one[:3]},
+            {"Local and regional India", "National and governance", "International"},
+        )
+        self.assertNotIn("stale-story", {article.article_id for article in day_one})
+        self.assertNotIn("cutoff-story", {article.article_id for article in day_one})
+        self.assertNotEqual(
+            {article.article_id for article in day_one},
+            {article.article_id for article in day_two},
+        )
+
+    def test_offline_story_art_is_polished_portrait_and_category_specific(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            health_slide = Path(temporary_directory) / "health.png"
+            technology_slide = Path(temporary_directory) / "technology.png"
+            for output, category in (
+                (health_slide, "Health"),
+                (technology_slide, "Technology"),
+            ):
+                _make_slide(
+                    "A major development in the sector",
+                    "Officials announced a new update today with further details from the source.",
+                    category,
+                    "Example News",
+                    output,
+                    story_number=1,
+                    story_count=6,
+                    brief_date="21 Nov 2026",
+                )
+                with Image.open(output) as image:
+                    self.assertEqual(image.size, (720, 1280))
+                    self.assertGreater(len(image.getcolors(maxcolors=1_000_000) or []), 500)
+
+            self.assertNotEqual(health_slide.read_bytes(), technology_slide.read_bytes())
+
+    def test_offline_news_job_saves_video_and_sources_without_publishing(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            published_at = datetime.now(timezone.utc) - timedelta(minutes=5)
+            settings = replace(
+                Settings.from_env(),
+                database_url=f"sqlite:///{root / 'offline.db'}",
+                require_postgres=False,
+                output_dir=root / "data",
+            )
+            init_db(settings)
+            historical_id = "c" * 32
+            historical_job = {
+                "id": historical_id,
+                "status": "ready",
+                "script": "A previously generated news briefing.",
+                "platforms": {},
+                "video_filename": f"{historical_id}.mp4",
+            }
+            create_job(settings.database_url, historical_job)
+            save_job(settings.database_url, historical_job)
+            with Session(get_engine(settings.database_url)) as session:
+                historical_record = session.get(JobRecord, historical_id)
+                self.assertIsNotNone(historical_record)
+                historical_record.created_at = datetime.now(timezone.utc) - timedelta(days=2)
+                session.commit()
+            historical_video = root / "data" / "videos" / f"{historical_id}.mp4"
+            historical_video.parent.mkdir(parents=True, exist_ok=True)
+            historical_video.write_bytes(b"old local video")
+            articles = [
+                Article(
+                    article_id=f"offline-{index}",
+                    title=f"News headline number {index}",
+                    summary=(
+                        f"Story number {index} reports a current development from "
+                        "its cited source with useful details for a short news briefing."
+                    ),
+                    url=f"https://news.example.test/offline/{index}",
+                    category=category,
+                    source="Example News",
+                    published_at=published_at,
+                )
+                for index, category in enumerate(
+                    ["India", "Regional", "World", "Technology and gadgets"],
+                    start=1,
+                )
+            ]
+            with (
+                patch("app.pipeline.fetch_articles", return_value=articles),
+                patch(
+                    "app.offline_video.OfflineVideoGenerator.create",
+                    autospec=True,
+                    side_effect=lambda _self, _draft, _article_map, video_path, _work_dir:
+                    video_path.write_bytes(b"offline video"),
+                ),
+                patch("app.pipeline.publish_youtube") as youtube_publish,
+                patch("app.pipeline.publish_instagram") as instagram_publish,
+            ):
+                with self.assertLogs("app.pipeline", level="INFO") as job_logs:
+                    result = prepare_offline_news_job(settings)
+
+            record = get_job(settings.database_url, result["id"])
+            self.assertTrue(any("fetched 4 fresh RSS stories" in line for line in job_logs.output))
+            self.assertTrue(any("ready: video=" in line for line in job_logs.output))
+            self.assertEqual(result["status"], "ready")
+            self.assertIsNotNone(record)
+            assert record is not None
+            self.assertEqual(record.status, "ready")
+            self.assertEqual(record.article_count, 4)
+            self.assertIn("India and around the world", record.script)
+            self.assertIn("https://news.example.test/offline/1", record.articles["offline-1"]["url"])
+            self.assertTrue(record.articles["offline-1"]["published_at"])
+            self.assertTrue((root / "data" / "videos" / record.video_filename).is_file())
+            self.assertIsNotNone(get_job(settings.database_url, historical_id))
+            self.assertTrue(historical_video.is_file())
+            self.assertEqual(record.platforms, {})
+            youtube_publish.assert_not_called()
+            instagram_publish.assert_not_called()
+            get_engine(settings.database_url).dispose()
+
+    def test_job_records_missing_credentials_without_deleting_history(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             output_dir = Path(temporary_directory)
             settings = replace(
@@ -335,8 +631,8 @@ class CoreTests(unittest.TestCase):
             instagram_publish.assert_not_called()
             self.assertEqual(result["status"], "failed")
             self.assertIn("OPENAI_API_KEY", result["error"])
-            self.assertFalse(old_video.exists())
-            self.assertIsNone(get_job(settings.database_url, expired_id))
+            self.assertTrue(old_video.exists())
+            self.assertIsNotNone(get_job(settings.database_url, expired_id))
             latest = get_latest_job(settings.database_url)
             self.assertIsNotNone(latest)
             self.assertEqual(latest.status, "failed")

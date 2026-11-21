@@ -1,4 +1,5 @@
 import argparse
+import logging
 import os
 import sys
 from pathlib import Path
@@ -32,6 +33,11 @@ def main(argv: list[str] | None = None) -> None:
         raise SystemExit("--port must be between 1 and 65535")
 
     os.environ["ENV"] = args.env
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+    logging.getLogger().setLevel(logging.INFO)
     host = "127.0.0.1" if args.env == "dev" else "0.0.0.0"
     print(f"Running 104Dairies in {args.env.upper()} mode on {host}:{args.port}")
     uvicorn.run(

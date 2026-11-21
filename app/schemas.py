@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from pydantic import BaseModel, Field
 
 
@@ -8,6 +10,7 @@ class Article(BaseModel):
     url: str
     category: str
     source: str
+    published_at: datetime | None = None
 
 
 class StoryBeat(BaseModel):

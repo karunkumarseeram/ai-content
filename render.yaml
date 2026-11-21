@@ -38,8 +38,6 @@ services:
         value: /var/data/youtube-token.json
       - key: META_GRAPH_API_VERSION
         value: v27.0
-      - key: POSTING_TIME
-        value: "18:00"
       - key: TIMEZONE
         value: Asia/Kolkata
       - key: FFMPEG_BIN
